@@ -1,0 +1,4 @@
+ostui
+.direnv/
+*.db
+*.log
