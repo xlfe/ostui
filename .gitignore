@@ -1,4 +1,5 @@
 ostui
 .direnv/
+.envrc
 *.db
 *.log
