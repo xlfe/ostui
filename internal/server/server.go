@@ -65,11 +65,13 @@ func (s *Server) RouteNotifications() {
 				s.svc.nodes.Broadcast(out.Notification)
 			} else {
 				node, ok := s.svc.nodes.Get(out.NodeAddr)
-				if ok {
-					select {
-					case node.NotifQueue <- out.Notification:
-					default:
-					}
+				if !ok {
+					log.Fatalf("FATAL: RouteNotifications: node %s not found, notification type=%s cannot be delivered", out.NodeAddr, out.Notification.Type)
+				}
+				select {
+				case node.NotifQueue <- out.Notification:
+				default:
+					log.Fatalf("FATAL: RouteNotifications: node %s NotifQueue full, notification type=%s dropped", out.NodeAddr, out.Notification.Type)
 				}
 			}
 		}

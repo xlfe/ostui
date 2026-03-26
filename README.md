@@ -10,9 +10,9 @@ A terminal UI for [OpenSnitch](https://github.com/evilsocket/opensnitch), the GN
 
 **Dashboard** — live stats updated every second from the daemon. Connection and rule counters with proportional bars, a togglable top-N panel (processes, destinations, ports), and grouped recent connections with marquee scrolling for long names, relative timestamps, and service name resolution for common ports.
 
-**Connection Prompt** — when the daemon intercepts an unknown connection, a modal overlay appears showing the process, destination, port, protocol, and user. Choose allow/deny/reject, pick a duration, and select what to match (executable, command line, destination, port, user, PID). 90 second timeout with countdown.
+**Connection Prompt** — when the daemon intercepts an unknown connection, a modal overlay appears showing the process, destination, port, protocol, and user. Choose allow/deny/reject, pick a duration, and select what to match. Supports compound rules — check multiple targets (e.g. executable + destination host) with space to create AND conditions. Sends a desktop notification and terminal bell so you don't miss it. 90 second timeout with countdown.
 
-**Rules Management** — split view with a rule list and detail card. Add, edit, toggle, and delete rules. Inline editor with dropdown selectors for action, duration, operator type, and all 22 operands. Create rules directly from grouped connections on the dashboard. Renaming a rule properly deletes the old one.
+**Rules Management** — split view with a rule list and detail card. Add, edit, toggle, and delete rules. Inline editor with dropdown selectors for action, duration, operator type, and all 22 operands. Create rules directly from grouped connections on the dashboard. Renaming a rule properly deletes the old one. Export rules to NixOS format with `x` for use with `services.opensnitch.rules`.
 
 **Node Management** — view connected daemons with status, version, rule count, and connection stats. Toggle interception on/off per node. Delete nodes (cascades to their rules and connections).
 
@@ -102,6 +102,7 @@ Make sure `opensnitchd` is configured to connect to the same socket address.
 | `e` / `Enter` | Edit selected rule |
 | `t` | Toggle enable/disable |
 | `d` | Delete (with confirmation) |
+| `x` | Export rules to NixOS format |
 
 ### Rule Editor
 
@@ -121,7 +122,8 @@ Make sure `opensnitchd` is configured to connect to the same socket address.
 | `d` | Deny |
 | `r` | Reject |
 | `Tab` / `Shift+Tab` | Cycle duration |
-| `Up` / `Down` | Cycle match target |
+| `Up` / `Down` | Navigate match targets |
+| `Space` | Toggle match target (combine for compound rules) |
 | `i` | Toggle details |
 | `Esc` | Apply default action |
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -119,12 +120,7 @@ func (nr *NodeRegistry) SendNotification(addr string, notif *pb.Notification) ch
 	select {
 	case node.NotifQueue <- notif:
 	default:
-		// Queue full, drop oldest.
-		select {
-		case <-node.NotifQueue:
-		default:
-		}
-		node.NotifQueue <- notif
+		log.Fatalf("FATAL: SendNotification: node %s NotifQueue full, notification id=%d dropped", addr, notif.Id)
 	}
 
 	return replyCh
@@ -139,6 +135,7 @@ func (nr *NodeRegistry) Broadcast(notif *pb.Notification) {
 			select {
 			case node.NotifQueue <- notif:
 			default:
+				log.Fatalf("FATAL: Broadcast: node %s NotifQueue full, notification dropped", node.Addr)
 			}
 		}
 	}
@@ -157,6 +154,7 @@ func (nr *NodeRegistry) HandleReply(reply *pb.NotificationReply) {
 		select {
 		case ch <- reply:
 		default:
+			log.Fatalf("FATAL: HandleReply: reply channel full for notification id=%d", reply.Id)
 		}
 	}
 }
@@ -174,5 +172,6 @@ func (nr *NodeRegistry) StopNotifications(addr string) {
 	select {
 	case node.NotifQueue <- sentinel:
 	default:
+		log.Fatalf("FATAL: StopNotifications: node %s NotifQueue full, sentinel cannot be sent", addr)
 	}
 }

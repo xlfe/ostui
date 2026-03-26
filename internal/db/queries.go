@@ -79,9 +79,15 @@ func (d *DB) DeleteNode(addr string) error {
 		return err
 	}
 	defer tx.Rollback()
-	tx.Exec(`DELETE FROM rules WHERE node=?`, addr)
-	tx.Exec(`DELETE FROM connections WHERE node=?`, addr)
-	tx.Exec(`DELETE FROM nodes WHERE addr=?`, addr)
+	if _, err := tx.Exec(`DELETE FROM rules WHERE node=?`, addr); err != nil {
+		return fmt.Errorf("delete rules for node %s: %w", addr, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM connections WHERE node=?`, addr); err != nil {
+		return fmt.Errorf("delete connections for node %s: %w", addr, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM nodes WHERE addr=?`, addr); err != nil {
+		return fmt.Errorf("delete node %s: %w", addr, err)
+	}
 	return tx.Commit()
 }
 

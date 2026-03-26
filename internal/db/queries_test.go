@@ -812,3 +812,90 @@ func TestFormatArgs(t *testing.T) {
 		}
 	}
 }
+
+// ---- DeleteNode tests ----
+
+func TestDeleteNodeRemovesAll(t *testing.T) {
+	d := openTestDB(t)
+	node := "peer:1.2.3.4"
+
+	// Insert a node, some rules, and some connections.
+	if err := d.UpsertNode(node, "host1", "1.0", "100", "2", "5", "0", "1.0", "online"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertRule(node, "rule1", "true", "false", "allow", "always", "simple", "false", "process.path", "/bin/a", "", "false", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertRule(node, "rule2", "true", "false", "deny", "once", "simple", "false", "dest.host", "evil.com", "", "false", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertConnection("2025-01-01T00:00:00Z", node, "allow", "tcp", "127.0.0.1", "1234", "1.2.3.4", "host", "443", "1000", "100", "/bin/a", "", "/tmp", "rule1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify data exists.
+	rules, _ := d.GetRules(node)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+	nodes, _ := d.GetNodes()
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	// Delete.
+	if err := d.DeleteNode(node); err != nil {
+		t.Fatalf("DeleteNode failed: %v", err)
+	}
+
+	// Verify everything is gone.
+	rules, _ = d.GetRules(node)
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules after delete, got %d", len(rules))
+	}
+	nodes, _ = d.GetNodes()
+	if len(nodes) != 0 {
+		t.Fatalf("expected 0 nodes after delete, got %d", len(nodes))
+	}
+}
+
+func TestDeleteNodeNonExistent(t *testing.T) {
+	d := openTestDB(t)
+	// Should not error when deleting a non-existent node.
+	if err := d.DeleteNode("peer:9.9.9.9"); err != nil {
+		t.Fatalf("DeleteNode for non-existent node should not error, got: %v", err)
+	}
+}
+
+func TestDeleteNodeDoesNotAffectOtherNodes(t *testing.T) {
+	d := openTestDB(t)
+
+	node1 := "peer:1.1.1.1"
+	node2 := "peer:2.2.2.2"
+
+	if err := d.InsertRule(node1, "rule-keep", "true", "false", "allow", "always", "simple", "false", "process.path", "/bin/a", "", "false", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertRule(node2, "rule-delete", "true", "false", "deny", "once", "simple", "false", "dest.host", "evil.com", "", "false", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.DeleteNode(node2); err != nil {
+		t.Fatalf("DeleteNode failed: %v", err)
+	}
+
+	// node1's rule should still exist.
+	rules, _ := d.GetRules(node1)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule for node1, got %d", len(rules))
+	}
+	if rules[0].Name != "rule-keep" {
+		t.Fatalf("expected rule 'rule-keep', got %q", rules[0].Name)
+	}
+
+	// node2's rule should be gone.
+	rules, _ = d.GetRules(node2)
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules for node2, got %d", len(rules))
+	}
+}

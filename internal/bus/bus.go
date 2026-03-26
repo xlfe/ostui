@@ -9,6 +9,7 @@ import (
 type PromptRequest struct {
 	Connection *pb.Connection
 	Peer       string
+	NodeAddr   string
 	IsLocal    bool
 	ResponseCh chan *pb.Rule
 }

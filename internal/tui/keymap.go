@@ -22,6 +22,7 @@ type keyMap struct {
 	Tab      key.Binding
 	ShiftTab key.Binding
 	Space    key.Binding
+	Export   key.Binding
 }
 
 var keys = keyMap{
@@ -44,4 +45,5 @@ var keys = keyMap{
 	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "Next")),
 	ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "Prev")),
 	Space:    key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "Select")),
+	Export:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "Export Nix")),
 }

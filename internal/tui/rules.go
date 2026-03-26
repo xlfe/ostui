@@ -2,10 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"time"
-
-	"log"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -68,6 +68,8 @@ type rulesModel struct {
 	confirmDel   bool
 	editOrigName string // original rule name before edit (to detect renames)
 	editOrigNode string
+	statusMsg    string
+	statusTime   time.Time
 }
 
 func newRulesModel(database *db.DB, eventBus *bus.EventBus) *rulesModel {
@@ -172,8 +174,8 @@ func (m *rulesModel) saveEditor() {
 			}
 			select {
 			case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: node, Notification: delNotif}:
-			default:
-				log.Printf("WARN notification channel full, dropped DELETE_RULE for %s", m.editOrigName)
+			case <-time.After(5 * time.Second):
+				log.Fatalf("FATAL: NotifOut channel blocked for 5s, DELETE_RULE for %s lost", m.editOrigName)
 			}
 		}
 	}
@@ -195,7 +197,8 @@ func (m *rulesModel) saveEditor() {
 	}
 	select {
 	case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: node, Notification: notif}:
-	default:
+	case <-time.After(5 * time.Second):
+		log.Fatalf("FATAL: NotifOut channel blocked for 5s, CHANGE_RULE for %s lost", v[fieldName])
 	}
 	m.editing = modeNone
 	m.loadRules()
@@ -233,6 +236,8 @@ func (m *rulesModel) Update(msg tea.Msg) tea.Cmd {
 			if len(m.rules) > 0 {
 				m.confirmDel = true
 			}
+		case key.Matches(msg, keys.Export):
+			m.exportNix()
 		}
 	}
 	return nil
@@ -333,7 +338,8 @@ func (m *rulesModel) toggleRule() {
 	}
 	select {
 	case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: r.Node, Notification: notif}:
-	default:
+	case <-time.After(5 * time.Second):
+		log.Fatalf("FATAL: NotifOut channel blocked for 5s, toggle rule %s lost", r.Name)
 	}
 	m.loadRules()
 }
@@ -352,9 +358,32 @@ func (m *rulesModel) doDelete() {
 	}
 	select {
 	case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: r.Node, Notification: notif}:
-	default:
+	case <-time.After(5 * time.Second):
+		log.Fatalf("FATAL: NotifOut channel blocked for 5s, DELETE_RULE for %s lost", r.Name)
 	}
 	m.loadRules()
+}
+
+const nixExportFile = "opensnitch-rules.nix"
+
+func (m *rulesModel) exportNix() {
+	m.loadRules()
+	if len(m.rules) == 0 {
+		m.statusMsg = "No rules to export"
+		m.statusTime = time.Now()
+		return
+	}
+
+	nix := ExportRulesToNix(m.rules)
+	if err := os.WriteFile(nixExportFile, []byte(nix), 0644); err != nil {
+		log.Printf("ERROR exportNix: %v", err)
+		m.statusMsg = fmt.Sprintf("Export failed: %v", err)
+		m.statusTime = time.Now()
+		return
+	}
+
+	m.statusMsg = fmt.Sprintf("Exported %d rules to %s", len(m.rules), nixExportFile)
+	m.statusTime = time.Now()
 }
 
 func (m *rulesModel) View() string {
@@ -437,10 +466,13 @@ func (m *rulesModel) View() string {
 
 	// --- Footer ---
 	footer := lipgloss.NewStyle().Foreground(colorDim).Render(
-		"  [a]dd  [e]dit  [t]oggle  [d]elete  [↑↓] navigate")
+		"  [a]dd  [e]dit  [t]oggle  [d]elete  [x] export nix  [↑↓] navigate")
 	if m.confirmDel && m.cursor < len(m.rules) {
 		footer = lipgloss.NewStyle().Foreground(colorRed).Bold(true).Render(
 			fmt.Sprintf("  Delete '%s'? [y] confirm / any key cancel", m.rules[m.cursor].Name))
+	}
+	if m.statusMsg != "" && time.Since(m.statusTime) < 5*time.Second {
+		footer += "\n" + lipgloss.NewStyle().Foreground(colorAccent).Render("  "+m.statusMsg)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, listPanel, detailPanel, footer)

@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -10,12 +13,17 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/safedoor/ostui/internal/bus"
+	"github.com/safedoor/ostui/internal/db"
 	pb "github.com/safedoor/ostui/proto/protocol"
 	"github.com/safedoor/ostui/internal/tui/components"
 )
 
+var ruleNameCounter atomic.Uint64
+
+const matchTargetCount = 7
+
 // Match target options for rule creation.
-var matchTargets = []struct {
+var matchTargets = [matchTargetCount]struct {
 	label   string
 	opType  string
 	operand string
@@ -32,6 +40,10 @@ var matchTargets = []struct {
 
 var durations = []string{"once", "30s", "5m", "15m", "30m", "1h", "12h", "until restart", "always"}
 
+// ruleCreatedMsg signals that a rule was created from the prompt and
+// the rules list should be refreshed.
+type ruleCreatedMsg struct{}
+
 type promptModel struct {
 	active    bool
 	request   *bus.PromptRequest
@@ -39,16 +51,19 @@ type promptModel struct {
 	height    int
 
 	selectedDuration int
-	selectedTarget   int
+	targetCursor     int              // which target the cursor is on
+	targetChecked    [matchTargetCount]bool // which targets are checked (multi-select)
 	countdown        int
 	showDetails      bool
 
 	defaultAction   string
 	defaultDuration string
 	defaultTimeout  int
+
+	database *db.DB
 }
 
-func newPromptModel(defaultAction, defaultDuration string, defaultTimeout int) *promptModel {
+func newPromptModel(defaultAction, defaultDuration string, defaultTimeout int, database *db.DB) *promptModel {
 	durIdx := 0
 	for i, d := range durations {
 		if d == defaultDuration {
@@ -57,10 +72,11 @@ func newPromptModel(defaultAction, defaultDuration string, defaultTimeout int) *
 		}
 	}
 	return &promptModel{
-		defaultAction:   defaultAction,
-		defaultDuration: defaultDuration,
-		defaultTimeout:  defaultTimeout,
+		defaultAction:    defaultAction,
+		defaultDuration:  defaultDuration,
+		defaultTimeout:   defaultTimeout,
 		selectedDuration: durIdx,
+		database:         database,
 	}
 }
 
@@ -69,7 +85,9 @@ func (m *promptModel) Show(req *bus.PromptRequest) {
 	m.active = true
 	m.request = req
 	m.countdown = m.defaultTimeout
-	m.selectedTarget = 0
+	m.targetCursor = 0
+	m.targetChecked = [matchTargetCount]bool{}
+	m.targetChecked[0] = true // default: check "from this executable"
 	m.showDetails = false
 
 	// Reset duration to default.
@@ -98,22 +116,22 @@ func (m *promptModel) Update(msg tea.Msg) (bool, tea.Cmd) {
 	case tickMsg:
 		m.countdown--
 		if m.countdown <= 0 {
-			m.respond(m.defaultAction)
-			return true, nil
+			cmd := m.respond(m.defaultAction)
+			return true, cmd
 		}
 		return true, tickCmd()
 
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("a"))):
-			m.respond("allow")
-			return true, nil
+			cmd := m.respond("allow")
+			return true, cmd
 		case key.Matches(msg, key.NewBinding(key.WithKeys("d"))):
-			m.respond("deny")
-			return true, nil
+			cmd := m.respond("deny")
+			return true, cmd
 		case key.Matches(msg, key.NewBinding(key.WithKeys("r"))):
-			m.respond("reject")
-			return true, nil
+			cmd := m.respond("reject")
+			return true, cmd
 		case key.Matches(msg, keys.Tab):
 			m.selectedDuration = (m.selectedDuration + 1) % len(durations)
 			return true, nil
@@ -121,17 +139,20 @@ func (m *promptModel) Update(msg tea.Msg) (bool, tea.Cmd) {
 			m.selectedDuration = (m.selectedDuration - 1 + len(durations)) % len(durations)
 			return true, nil
 		case key.Matches(msg, keys.Up):
-			m.selectedTarget = (m.selectedTarget - 1 + len(matchTargets)) % len(matchTargets)
+			m.targetCursor = (m.targetCursor - 1 + len(matchTargets)) % len(matchTargets)
 			return true, nil
 		case key.Matches(msg, keys.Down):
-			m.selectedTarget = (m.selectedTarget + 1) % len(matchTargets)
+			m.targetCursor = (m.targetCursor + 1) % len(matchTargets)
+			return true, nil
+		case key.Matches(msg, keys.Space):
+			m.targetChecked[m.targetCursor] = !m.targetChecked[m.targetCursor]
 			return true, nil
 		case key.Matches(msg, key.NewBinding(key.WithKeys("i"))):
 			m.showDetails = !m.showDetails
 			return true, nil
 		case key.Matches(msg, keys.Esc):
-			m.respond(m.defaultAction)
-			return true, nil
+			cmd := m.respond(m.defaultAction)
+			return true, cmd
 		}
 		return true, nil
 	}
@@ -139,15 +160,80 @@ func (m *promptModel) Update(msg tea.Msg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-func (m *promptModel) respond(action string) {
+// checkedTargets returns the indices of all checked match targets that have
+// non-empty data for the current connection.
+func (m *promptModel) checkedTargets() []int {
+	var result []int
+	for i, checked := range m.targetChecked {
+		if !checked {
+			continue
+		}
+		data := matchTargets[i].dataFn(m.request.Connection)
+		if data == "" || data == "0" {
+			continue
+		}
+		result = append(result, i)
+	}
+	// If nothing checked (or all checked targets had empty data), fall back to
+	// whichever target the cursor is on.
+	if len(result) == 0 {
+		result = []int{m.targetCursor}
+	}
+	return result
+}
+
+func (m *promptModel) respond(action string) tea.Cmd {
 	if m.request == nil || m.request.ResponseCh == nil {
 		m.active = false
-		return
+		return nil
 	}
 
 	conn := m.request.Connection
-	target := matchTargets[m.selectedTarget]
 	dur := durations[m.selectedDuration]
+	checked := m.checkedTargets()
+
+	var op *pb.Operator
+	var dbOpType, dbOpOperand, dbOpData string
+
+	if len(checked) == 1 {
+		// Simple rule — single condition.
+		t := matchTargets[checked[0]]
+		op = &pb.Operator{
+			Type:    t.opType,
+			Operand: t.operand,
+			Data:    t.dataFn(conn),
+		}
+		dbOpType = t.opType
+		dbOpOperand = t.operand
+		dbOpData = t.dataFn(conn)
+	} else {
+		// Compound rule — list of conditions (AND).
+		var subs []*pb.Operator
+		var jsonSubs []subOperator
+		for _, idx := range checked {
+			t := matchTargets[idx]
+			data := t.dataFn(conn)
+			subs = append(subs, &pb.Operator{
+				Type:    t.opType,
+				Operand: t.operand,
+				Data:    data,
+			})
+			jsonSubs = append(jsonSubs, subOperator{
+				Type:    t.opType,
+				Operand: t.operand,
+				Data:    data,
+			})
+		}
+		op = &pb.Operator{
+			Type:    "list",
+			Operand: "list",
+			List:    subs,
+		}
+		jsonBytes, _ := json.Marshal(jsonSubs)
+		dbOpType = "list"
+		dbOpOperand = "list"
+		dbOpData = string(jsonBytes)
+	}
 
 	rule := &pb.Rule{
 		Created:  time.Now().Unix(),
@@ -155,19 +241,37 @@ func (m *promptModel) respond(action string) {
 		Enabled:  true,
 		Action:   action,
 		Duration: dur,
-		Operator: &pb.Operator{
-			Type:    target.opType,
-			Operand: target.operand,
-			Data:    target.dataFn(conn),
-		},
+		Operator: op,
 	}
 
 	select {
 	case m.request.ResponseCh <- rule:
-	default:
+	case <-time.After(5 * time.Second):
+		log.Fatalf("FATAL: prompt ResponseCh blocked for 5s, rule %s lost — daemon will not receive user decision", rule.Name)
 	}
+
+	// Persist rule to local database so it appears in the rules list.
+	nodeAddr := m.request.NodeAddr
+	if nodeAddr == "" {
+		nodeAddr = "unix:local"
+	}
+	created := time.Now().Format(time.RFC3339)
+	if m.database != nil {
+		if err := m.database.InsertRule(
+			nodeAddr, rule.Name, "true", "false",
+			rule.Action, rule.Duration, dbOpType, "false",
+			dbOpOperand, dbOpData, "", "false", created,
+		); err != nil {
+			log.Printf("ERROR prompt InsertRule(%s): %v", rule.Name, err)
+		} else {
+			log.Printf("Prompt rule persisted: %s (action=%s duration=%s node=%s)", rule.Name, rule.Action, rule.Duration, nodeAddr)
+		}
+	}
+
 	m.active = false
 	m.request = nil
+
+	return func() tea.Msg { return ruleCreatedMsg{} }
 }
 
 func (m *promptModel) View() string {
@@ -225,30 +329,34 @@ func (m *promptModel) View() string {
 	}
 	durLine := "  Duration: " + strings.Join(durParts, " │ ")
 
-	// Match target selector.
+	// Match target selector (multi-select with checkboxes).
 	var targetLines []string
 	for i, t := range matchTargets {
 		data := t.dataFn(conn)
 		if data == "" || data == "0" {
 			continue
 		}
-		prefix := "  "
-		label := t.label
-		if i == m.selectedTarget {
-			prefix = promptSelectedStyle.Render("▸ ")
-			label = promptSelectedStyle.Render(label)
-		} else {
-			prefix = lipgloss.NewStyle().Foreground(colorDim).Render("  ")
-			label = lipgloss.NewStyle().Foreground(colorDim).Render(label)
+		check := "[ ]"
+		if m.targetChecked[i] {
+			check = "[x]"
 		}
-		targetLines = append(targetLines, prefix+label)
+		isCursor := i == m.targetCursor
+		if isCursor {
+			cursor := promptSelectedStyle.Render("▸ " + check)
+			label := promptSelectedStyle.Render(" " + t.label)
+			targetLines = append(targetLines, cursor+label)
+		} else if m.targetChecked[i] {
+			targetLines = append(targetLines, lipgloss.NewStyle().Foreground(colorFg).Render("  "+check+" "+t.label))
+		} else {
+			targetLines = append(targetLines, lipgloss.NewStyle().Foreground(colorDim).Render("  "+check+" "+t.label))
+		}
 	}
-	matchSection := "  Match:\n" + strings.Join(targetLines, "\n")
+	matchSection := "  Match (combine with space):\n" + strings.Join(targetLines, "\n")
 
 	// Footer.
 	footer := "  " +
-		lipgloss.NewStyle().Foreground(colorDim).Render("[i] details   [tab] duration   [↑↓] match") +
-		"    " +
+		lipgloss.NewStyle().Foreground(colorDim).Render("[i] details   [tab] duration   [↑↓] navigate   [space] toggle match") +
+		"\n  " +
 		promptCountdownStyle.Render("Timeout: "+components.RenderCountdown(m.countdown)) +
 		"  " +
 		lipgloss.NewStyle().Foreground(colorDim).Render("[esc] default")
@@ -278,6 +386,7 @@ func (m *promptModel) View() string {
 
 func generateRuleName(action string, conn *pb.Connection) string {
 	proc := extractProcessName(conn.ProcessPath)
-	return fmt.Sprintf("%s-%s-%d-%d",
-		action, proc, conn.DstPort, time.Now().UnixNano()%100000)
+	seq := ruleNameCounter.Add(1)
+	return fmt.Sprintf("%s-%s-%d-%d-%d",
+		action, proc, conn.DstPort, time.Now().UnixNano()%100000, seq)
 }

@@ -104,7 +104,8 @@ func (m *nodesModel) toggleInterception() {
 	}
 	select {
 	case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: n.Addr, Notification: notif}:
-	default:
+	case <-time.After(5 * time.Second):
+		log.Fatalf("FATAL: NotifOut channel blocked for 5s, interception toggle for %s lost", n.Addr)
 	}
 }
 
@@ -124,7 +125,8 @@ func (m *nodesModel) deleteNode() {
 		}
 		select {
 		case m.eventBus.NotifOut <- bus.OutgoingNotification{NodeAddr: n.Addr, Notification: notif}:
-		default:
+		case <-time.After(5 * time.Second):
+			log.Fatalf("FATAL: NotifOut channel blocked for 5s, STOP for node %s lost", n.Addr)
 		}
 	}
 	delete(m.intercepting, n.Addr)

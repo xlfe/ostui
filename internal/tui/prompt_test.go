@@ -204,7 +204,7 @@ func TestDurations(t *testing.T) {
 }
 
 func TestNewPromptModel(t *testing.T) {
-	m := newPromptModel("deny", "until restart", 30)
+	m := newPromptModel("deny", "until restart", 30, nil)
 	if m.defaultAction != "deny" {
 		t.Fatalf("expected default action deny, got %s", m.defaultAction)
 	}
@@ -238,7 +238,7 @@ func TestNewPromptModelDurationIndex(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.dur, func(t *testing.T) {
-			m := newPromptModel("deny", tt.dur, 30)
+			m := newPromptModel("deny", tt.dur, 30, nil)
 			if m.selectedDuration != tt.wantIdx {
 				t.Errorf("selectedDuration for %q = %d, want %d", tt.dur, m.selectedDuration, tt.wantIdx)
 			}

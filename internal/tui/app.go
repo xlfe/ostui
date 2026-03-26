@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -72,7 +73,7 @@ func New(cfg *config.Config, eventBus *bus.EventBus, database *db.DB) *App {
 		nodes:     newNodesModel(database, eventBus),
 		firewall:  newFirewallModel(),
 		alerts:    newAlertsModel(database),
-		prompt:    newPromptModel(cfg.DefaultAction, cfg.DefaultDuration, cfg.DefaultTimeout),
+		prompt:    newPromptModel(cfg.DefaultAction, cfg.DefaultDuration, cfg.DefaultTimeout, database),
 	}
 }
 
@@ -148,7 +149,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptMsg:
 		req := bus.PromptRequest(msg)
 		a.prompt.Show(&req)
-		return a, tickCmd()
+		return a, tea.Batch(tickCmd(), notifyRuleRequest(&req))
+
+	case ruleCreatedMsg:
+		// A rule was created from the prompt — refresh the rules list.
+		a.rules.loadRules()
+		return a, nil
 
 	case alertMsg:
 		if msg.Alert != nil {
@@ -315,8 +321,16 @@ func (a *App) View() tea.View {
 	result := tabBar + "\n" + content + "\n" + statusBar
 
 	// Overlay prompt if active.
-	if a.prompt.active {
+	if a.prompt.active && a.prompt.request != nil {
 		result = a.prompt.View()
+		conn := a.prompt.request.Connection
+		dest := conn.DstHost
+		if dest == "" {
+			dest = conn.DstIp
+		}
+		v.WindowTitle = fmt.Sprintf("⚠ %s → %s:%d — ostui", extractProcessName(conn.ProcessPath), dest, conn.DstPort)
+	} else {
+		v.WindowTitle = "ostui"
 	}
 
 	// Help overlay.
@@ -367,6 +381,7 @@ func (a *App) renderHelp() string {
 		{"Rules:", ""},
 		{"t", "Toggle enable/disable"},
 		{"d", "Delete rule"},
+		{"x", "Export rules to Nix"},
 		{"", ""},
 		{"Prompt:", ""},
 		{"a/d/r", "Allow / Deny / Reject"},

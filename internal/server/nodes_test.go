@@ -408,22 +408,23 @@ func TestNodeQueueBufferSize(t *testing.T) {
 	}
 }
 
-func TestSendNotificationQueueFull(t *testing.T) {
+func TestSendNotificationQueueCapacity(t *testing.T) {
 	nr := newNodeRegistry()
 	cfg := makeTestConfig()
 	nr.Register("peer:1.2.3.4", cfg, "s1")
 
-	// Fill the queue.
+	// Verify we can send up to the queue capacity without issues.
 	node, _ := nr.Get("peer:1.2.3.4")
 	for i := 0; i < cap(node.NotifQueue); i++ {
-		node.NotifQueue <- &pb.Notification{Id: uint64(i)}
+		notif := &pb.Notification{Id: uint64(i), Type: pb.Action_ENABLE_FIREWALL}
+		replyCh := nr.SendNotification("peer:1.2.3.4", notif)
+		if replyCh == nil {
+			t.Fatalf("SendNotification returned nil on send %d", i)
+		}
 	}
-
-	// Sending when full should still succeed (drops oldest).
-	notif := &pb.Notification{Id: 9999, Type: pb.Action_ENABLE_FIREWALL}
-	replyCh := nr.SendNotification("peer:1.2.3.4", notif)
-	if replyCh == nil {
-		t.Fatal("SendNotification should still return a channel when queue is full")
+	// Queue should now be full (64 items).
+	if len(node.NotifQueue) != cap(node.NotifQueue) {
+		t.Fatalf("expected queue to be full (%d), got %d", cap(node.NotifQueue), len(node.NotifQueue))
 	}
 }
 

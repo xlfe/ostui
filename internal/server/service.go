@@ -61,7 +61,7 @@ func (s *service) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingReply,
 		select {
 		case s.bus.StatsUpdate <- bus.StatsUpdate{Peer: nodeAddr, Stats: req.Stats}:
 		default:
-			log.Printf("WARN stats channel full, dropping update for %s", nodeAddr)
+			log.Fatalf("FATAL: StatsUpdate channel full, update for %s cannot be delivered", nodeAddr)
 		}
 	}
 
@@ -81,6 +81,7 @@ func (s *service) AskRule(ctx context.Context, conn *pb.Connection) (*pb.Rule, e
 	prompt := bus.PromptRequest{
 		Connection: conn,
 		Peer:       peerAddr,
+		NodeAddr:   nodeAddr,
 		IsLocal:    isLocalPeer(proto),
 		ResponseCh: responseCh,
 	}
@@ -146,7 +147,7 @@ func (s *service) Subscribe(ctx context.Context, clientConfig *pb.ClientConfig) 
 	select {
 	case s.bus.NodeEvent <- bus.NodeEvent{Type: bus.NodeAdded, Addr: nodeAddr, Config: clientConfig}:
 	default:
-		log.Printf("WARN node event channel full, dropped NodeAdded for %s", nodeAddr)
+		log.Fatalf("FATAL: NodeEvent channel full, NodeAdded for %s cannot be delivered", nodeAddr)
 	}
 
 	s.overwriteConfig(clientConfig)
@@ -180,7 +181,7 @@ func (s *service) Notifications(stream pb.UI_NotificationsServer) error {
 			select {
 			case s.bus.NotifReply <- bus.NotifReply{Peer: nodeAddr, Reply: reply}:
 			default:
-				log.Printf("WARN notif reply channel full, dropped reply id=%d from %s", reply.Id, nodeAddr)
+				log.Fatalf("FATAL: NotifReply channel full, reply id=%d from %s cannot be delivered", reply.Id, nodeAddr)
 			}
 		}
 	}()
@@ -243,7 +244,7 @@ func (s *service) PostAlert(ctx context.Context, alert *pb.Alert) (*pb.MsgRespon
 	select {
 	case s.bus.AlertEvent <- bus.AlertEvent{Peer: nodeAddr, Alert: alert}:
 	default:
-		log.Printf("WARN alert channel full, dropped alert from %s: %s", nodeAddr, body)
+		log.Fatalf("FATAL: AlertEvent channel full, alert from %s cannot be delivered: %s", nodeAddr, body)
 	}
 
 	return &pb.MsgResponse{Id: alert.Id}, nil
@@ -324,7 +325,7 @@ func (s *service) handleDisconnect(nodeAddr, sessionPeer string) {
 	select {
 	case s.bus.NodeEvent <- bus.NodeEvent{Type: bus.NodeRemoved, Addr: nodeAddr}:
 	default:
-		log.Printf("WARN node event channel full, dropped NodeRemoved for %s", nodeAddr)
+		log.Fatalf("FATAL: NodeEvent channel full, NodeRemoved for %s cannot be delivered", nodeAddr)
 	}
 }
 
