@@ -372,6 +372,23 @@ func ruleToRow(r *pb.Rule) db.RuleRow {
 		if r.Operator.Sensitive {
 			opSensitive = "true"
 		}
+		// For list-type operators, serialize sub-operators to JSON so
+		// they survive the round-trip through the DB and Nix export.
+		if (opType == "list" || opType == "lists") && len(r.Operator.List) > 0 {
+			type sub struct {
+				Type      string `json:"type"`
+				Operand   string `json:"operand"`
+				Data      string `json:"data"`
+				Sensitive bool   `json:"sensitive"`
+			}
+			subs := make([]sub, len(r.Operator.List))
+			for i, op := range r.Operator.List {
+				subs[i] = sub{Type: op.Type, Operand: op.Operand, Data: op.Data, Sensitive: op.Sensitive}
+			}
+			if b, err := json.Marshal(subs); err == nil {
+				opData = string(b)
+			}
+		}
 	}
 	enabled := "false"
 	if r.Enabled {
