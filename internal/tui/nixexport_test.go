@@ -393,7 +393,7 @@ func TestCleanNixAttrName(t *testing.T) {
 	}
 }
 
-func TestExportNixCleanedAttrKeyPreservesNameValue(t *testing.T) {
+func TestExportNixCleanedAttrKeyAndNameValue(t *testing.T) {
 	rules := []db.RuleRow{
 		{
 			Name: "allow-fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude-443", Enabled: "true", Action: "allow", Duration: "always",
@@ -408,9 +408,9 @@ func TestExportNixCleanedAttrKeyPreservesNameValue(t *testing.T) {
 	if !strings.Contains(out, "allow-claude-443 = {") {
 		t.Fatalf("attribute key should have hash stripped:\n%s", out)
 	}
-	// name value must preserve the original for the daemon.
-	if !strings.Contains(out, `name = "allow-fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude-443";`) {
-		t.Fatalf("name value should be preserved:\n%s", out)
+	// name value should also be cleaned (hash removed), matching the attribute key.
+	if !strings.Contains(out, `name = "allow-claude-443";`) {
+		t.Fatalf("name value should have hash stripped:\n%s", out)
 	}
 }
 

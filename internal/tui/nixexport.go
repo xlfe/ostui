@@ -70,7 +70,7 @@ func ExportRulesToNix(rules []db.RuleRow) string {
 
 		name := nixAttrName(attrKeys[i])
 		b.WriteString(fmt.Sprintf("  %s = {\n", name))
-		b.WriteString(fmt.Sprintf("    name = %s;\n", nixString(r.Name)))
+		b.WriteString(fmt.Sprintf("    name = %s;\n", nixString(attrKeys[i])))
 		b.WriteString(fmt.Sprintf("    enabled = %s;\n", nixBool(r.Enabled)))
 		b.WriteString(fmt.Sprintf("    action = %s;\n", nixString(r.Action)))
 		b.WriteString(fmt.Sprintf("    duration = %s;\n", nixString(r.Duration)))

@@ -17,13 +17,19 @@ import (
 
 var nixStoreRe = regexp.MustCompile(`^/nix/store/[a-z0-9]+-([^/]+)/`)
 
+// nixBaseHashRe matches a 32-char nix store hash prefix on a basename.
+var nixBaseHashRe = regexp.MustCompile(`^[a-z0-9]{32}-`)
+
 func extractProcessName(path string) string {
 	if path == "" {
 		return path
 	}
 	if strings.HasPrefix(path, "/nix/store/") {
 		if idx := strings.LastIndex(path, "/"); idx >= 0 && idx < len(path)-1 {
-			return path[idx+1:]
+			base := path[idx+1:]
+			// Strip 32-char nix hash prefix from direct store paths
+			// (e.g. /nix/store/abc…xyz-claude → claude).
+			return nixBaseHashRe.ReplaceAllLiteralString(base, "")
 		}
 		if m := nixStoreRe.FindStringSubmatch(path); len(m) > 1 {
 			return m[1]
