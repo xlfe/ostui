@@ -144,10 +144,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		a.focused = true
-		// Resume ticks and refresh stale data.
+		// Refresh stale data.
 		a.rules.loadRules()
 		a.alerts.loadAlerts()
 		a.nodes.loadNodes()
+		// Resume ticks only if a prompt isn't already driving a tick chain.
+		if a.prompt.active {
+			return a, a.pollBus()
+		}
 		return a, tea.Batch(tickCmd(), a.pollBus())
 
 	case tea.BlurMsg:
@@ -165,7 +169,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case promptMsg:
 		req := bus.PromptRequest(msg)
 		a.prompt.Show(&req)
-		return a, tea.Batch(tickCmd(), notifyRuleRequest(&req))
+		// Only start a new tick chain if one isn't already running (i.e. app
+		// is blurred and no prior prompt was active). Starting a second chain
+		// while focused causes the countdown to decrement twice per second.
+		if !a.focused {
+			return a, tea.Batch(tickCmd(), notifyRuleRequest(&req))
+		}
+		return a, notifyRuleRequest(&req)
 
 	case ruleCreatedMsg:
 		// A rule was created from the prompt — refresh the rules list.
