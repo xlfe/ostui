@@ -20,6 +20,7 @@ type nodesModel struct {
 	width, height int
 	nodes         []db.NodeRow
 	cursor        int
+	scrollOffset  int
 	database      *db.DB
 	eventBus      *bus.EventBus
 	confirmDel    bool
@@ -153,11 +154,21 @@ func (m *nodesModel) View() string {
 		"ADDRESS", "HOSTNAME", "VERSION", "STATUS", "INTERCEPT", "RULES", "CONNS",
 	))
 
+	// Keep cursor in the visible window.
+	if m.cursor >= m.scrollOffset+tableRows {
+		m.scrollOffset = m.cursor - tableRows + 1
+	}
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	}
+
 	var rows []string
-	for i, n := range m.nodes {
-		if i >= tableRows {
-			break
-		}
+	end := m.scrollOffset + tableRows
+	if end > len(m.nodes) {
+		end = len(m.nodes)
+	}
+	for i := m.scrollOffset; i < end; i++ {
+		n := m.nodes[i]
 
 		statusStyle := statAcceptStyle
 		statusLabel := n.Status

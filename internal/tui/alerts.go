@@ -16,6 +16,7 @@ type alertsModel struct {
 	width, height int
 	alerts        []db.AlertRow
 	cursor        int
+	scrollOffset  int
 	database      *db.DB
 }
 
@@ -78,11 +79,21 @@ func (m *alertsModel) View() string {
 		timeW, "TIME", "TYPE", "PRIORITY", "WHAT", "BODY",
 	))
 
+	// Keep cursor in the visible window.
+	if m.cursor >= m.scrollOffset+innerHeight {
+		m.scrollOffset = m.cursor - innerHeight + 1
+	}
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	}
+
 	var rows []string
-	for i, a := range m.alerts {
-		if i >= innerHeight {
-			break
-		}
+	end := m.scrollOffset + innerHeight
+	if end > len(m.alerts) {
+		end = len(m.alerts)
+	}
+	for i := m.scrollOffset; i < end; i++ {
+		a := m.alerts[i]
 
 		t := a.Time
 		if len(t) > timeW {

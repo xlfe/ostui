@@ -20,7 +20,7 @@ import (
 
 var ruleNameCounter atomic.Uint64
 
-const matchTargetCount = 7
+const matchTargetCount = 12
 
 // Match target options for rule creation.
 var matchTargets = [matchTargetCount]struct {
@@ -31,11 +31,16 @@ var matchTargets = [matchTargetCount]struct {
 }{
 	{"from this executable", "simple", "process.path", func(c *pb.Connection) string { return c.ProcessPath }},
 	{"from this command line", "simple", "process.command", func(c *pb.Connection) string { return strings.Join(c.ProcessArgs, " ") }},
+	{"from this CWD", "simple", "process.cwd", func(c *pb.Connection) string { return c.ProcessCwd }},
 	{"to this port", "simple", "dest.port", func(c *pb.Connection) string { return fmt.Sprintf("%d", c.DstPort) }},
 	{"to this IP", "simple", "dest.ip", func(c *pb.Connection) string { return c.DstIp }},
 	{"to this host", "simple", "dest.host", func(c *pb.Connection) string { return c.DstHost }},
+	{"from this source IP", "simple", "source.ip", func(c *pb.Connection) string { return c.SrcIp }},
+	{"from this source port", "simple", "source.port", func(c *pb.Connection) string { return fmt.Sprintf("%d", c.SrcPort) }},
+	{"via this protocol", "simple", "protocol", func(c *pb.Connection) string { return c.Protocol }},
 	{"from this user", "simple", "user.id", func(c *pb.Connection) string { return fmt.Sprintf("%d", c.UserId) }},
 	{"from this PID", "simple", "process.id", func(c *pb.Connection) string { return fmt.Sprintf("%d", c.ProcessId) }},
+	{"matching SHA1", "simple", "process.hash.sha1", func(c *pb.Connection) string { return c.ProcessChecksums["sha1"] }},
 }
 
 var durations = []string{"once", "30s", "5m", "15m", "30m", "1h", "12h", "until restart", "always"}
@@ -85,10 +90,19 @@ func (m *promptModel) Show(req *bus.PromptRequest) {
 	m.active = true
 	m.request = req
 	m.countdown = m.defaultTimeout
-	m.targetCursor = 0
 	m.targetChecked = [matchTargetCount]bool{}
-	m.targetChecked[0] = true // default: check "from this executable"
 	m.showDetails = false
+
+	// Start cursor on the first visible target and check it by default.
+	m.targetCursor = 0
+	for i, t := range matchTargets {
+		data := t.dataFn(req.Connection)
+		if data != "" && data != "0" {
+			m.targetCursor = i
+			m.targetChecked[i] = true
+			break
+		}
+	}
 
 	// Reset duration to default.
 	for i, d := range durations {
@@ -97,6 +111,40 @@ func (m *promptModel) Show(req *bus.PromptRequest) {
 			break
 		}
 	}
+}
+
+// nextVisibleTarget returns the next target index (after current cursor) that
+// has non-empty data for the current connection, wrapping around.
+func (m *promptModel) nextVisibleTarget() int {
+	if m.request == nil {
+		return m.targetCursor
+	}
+	conn := m.request.Connection
+	for step := 1; step < len(matchTargets); step++ {
+		idx := (m.targetCursor + step) % len(matchTargets)
+		data := matchTargets[idx].dataFn(conn)
+		if data != "" && data != "0" {
+			return idx
+		}
+	}
+	return m.targetCursor
+}
+
+// prevVisibleTarget returns the previous target index (before current cursor)
+// that has non-empty data for the current connection, wrapping around.
+func (m *promptModel) prevVisibleTarget() int {
+	if m.request == nil {
+		return m.targetCursor
+	}
+	conn := m.request.Connection
+	for step := 1; step < len(matchTargets); step++ {
+		idx := (m.targetCursor - step + len(matchTargets)) % len(matchTargets)
+		data := matchTargets[idx].dataFn(conn)
+		if data != "" && data != "0" {
+			return idx
+		}
+	}
+	return m.targetCursor
 }
 
 type tickMsg time.Time
@@ -139,10 +187,10 @@ func (m *promptModel) Update(msg tea.Msg) (bool, tea.Cmd) {
 			m.selectedDuration = (m.selectedDuration - 1 + len(durations)) % len(durations)
 			return true, nil
 		case key.Matches(msg, keys.Up):
-			m.targetCursor = (m.targetCursor - 1 + len(matchTargets)) % len(matchTargets)
+			m.targetCursor = m.prevVisibleTarget()
 			return true, nil
 		case key.Matches(msg, keys.Down):
-			m.targetCursor = (m.targetCursor + 1) % len(matchTargets)
+			m.targetCursor = m.nextVisibleTarget()
 			return true, nil
 		case key.Matches(msg, keys.Space):
 			m.targetChecked[m.targetCursor] = !m.targetChecked[m.targetCursor]

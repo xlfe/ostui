@@ -48,6 +48,7 @@ type App struct {
 	width, height int
 	activeTab     int
 	showHelp      bool
+	focused       bool
 
 	dashboard *dashboardModel
 	rules     *rulesModel
@@ -68,6 +69,7 @@ func New(cfg *config.Config, eventBus *bus.EventBus, database *db.DB) *App {
 		bus:       eventBus,
 		db:        database,
 		activeTab: tabDashboard,
+		focused:   true,
 		dashboard: dash,
 		rules:     newRulesModel(database, eventBus),
 		nodes:     newNodesModel(database, eventBus),
@@ -140,6 +142,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.updateChildSizes()
 		return a, nil
 
+	case tea.FocusMsg:
+		a.focused = true
+		// Resume ticks and refresh stale data.
+		a.rules.loadRules()
+		a.alerts.loadAlerts()
+		a.nodes.loadNodes()
+		return a, tea.Batch(tickCmd(), a.pollBus())
+
+	case tea.BlurMsg:
+		a.focused = false
+		// Stop cosmetic ticks — prompt countdown and bus bridge
+		// continue via promptMsg/tickMsg from prompt.
+		return a, nil
+
 	case statsMsg:
 		a.dashboard.updateStats(msg.Stats)
 		a.status.daemonVersion = msg.Stats.DaemonVersion
@@ -161,7 +177,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.status.alert = msg.Alert.What.String()
 			a.status.alertTime = time.Now()
 		}
-		a.alerts.loadAlerts()
+		if a.focused {
+			a.alerts.loadAlerts()
+		}
 		return a, nil
 
 	case nodeMsg:
@@ -175,20 +193,34 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.status.nodesOnline = 0
 			}
 		}
-		a.nodes.loadNodes()
+		if a.focused {
+			a.nodes.loadNodes()
+		}
 		return a, nil
 
 	case tickMsg:
-		a.dashboard.tickCount++
 		if a.prompt.active {
+			a.dashboard.tickCount++
 			handled, cmd := a.prompt.Update(msg)
 			if handled {
 				return a, cmd
 			}
+			return a, tickCmd()
 		}
+		if !a.focused {
+			// Don't reschedule ticks while blurred and no prompt.
+			return a, nil
+		}
+		a.dashboard.tickCount++
 		return a, tickCmd()
 
 	case busCheckMsg:
+		if !a.focused && !a.prompt.active {
+			// Slow down bus polling while blurred: 1s instead of 100ms.
+			return a, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+				return busCheckMsg{}
+			})
+		}
 		return a, a.pollBus()
 
 	case tea.KeyMsg:
@@ -289,6 +321,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) View() tea.View {
 	v := tea.NewView("")
 	v.AltScreen = true
+	v.ReportFocus = true
 
 	if a.width == 0 || a.height == 0 {
 		v.SetContent("Initializing...")

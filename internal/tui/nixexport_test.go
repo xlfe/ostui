@@ -367,6 +367,127 @@ func TestExportRulesToNixBalancedBrackets(t *testing.T) {
 	}
 }
 
+func TestCleanNixAttrName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// Rule name with nix hash gets cleaned.
+		{"allow-always-simple-nix-store-2md38jpiicw64pngxqifiw8casjvmk0h-google-chrome", "allow-always-simple-nix-store-google-chrome"},
+		// Short name without hash stays the same.
+		{"allow-curl-443-12345-1", "allow-curl-443-12345-1"},
+		// Hash-only prefix in name.
+		{"allow-fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude-443", "allow-claude-443"},
+		// No hash at all.
+		{"systemd-resolved", "systemd-resolved"},
+		// Empty string.
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := cleanNixAttrName(tt.input)
+			if got != tt.want {
+				t.Errorf("cleanNixAttrName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExportNixCleanedAttrKeyPreservesNameValue(t *testing.T) {
+	rules := []db.RuleRow{
+		{
+			Name: "allow-fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude-443", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "process.path",
+			OpData: "/nix/store/fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude", Precedence: "false", Nolog: "false",
+		},
+	}
+
+	out := ExportRulesToNix(rules)
+
+	// Attribute key should be cleaned (hash removed).
+	if !strings.Contains(out, "allow-claude-443 = {") {
+		t.Fatalf("attribute key should have hash stripped:\n%s", out)
+	}
+	// name value must preserve the original for the daemon.
+	if !strings.Contains(out, `name = "allow-fnfajsmy8pyz1slb02chfpw2fpd5f8hn-claude-443";`) {
+		t.Fatalf("name value should be preserved:\n%s", out)
+	}
+}
+
+func TestExportNixDeduplicatesCleanedNames(t *testing.T) {
+	rules := []db.RuleRow{
+		{
+			Name: "allow-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1-ssh-22", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "process.path",
+			OpData: "/usr/bin/ssh", Precedence: "false", Nolog: "false",
+		},
+		{
+			Name: "allow-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-ssh-22", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "process.path",
+			OpData: "/usr/bin/ssh", Precedence: "false", Nolog: "false",
+		},
+	}
+
+	out := ExportRulesToNix(rules)
+
+	// First should keep the clean name, second should get a suffix.
+	if !strings.Contains(out, "allow-ssh-22 = {") {
+		t.Fatalf("first rule should have clean name:\n%s", out)
+	}
+	if !strings.Contains(out, "allow-ssh-22-2 = {") {
+		t.Fatalf("second rule should have deduplicated name:\n%s", out)
+	}
+}
+
+func TestExportNixProcessComment(t *testing.T) {
+	rules := []db.RuleRow{
+		{
+			Name: "allow-chrome-443", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "process.path",
+			OpData:     "/nix/store/2md38jpiicw64pngxqifiw8casjvmk0h-google-chrome-146.0.7680.153/share/google/chrome/chrome",
+			Precedence: "false", Nolog: "false",
+		},
+	}
+
+	out := ExportRulesToNix(rules)
+
+	if !strings.Contains(out, "  # chrome\n") {
+		t.Fatalf("expected basename comment for nix store path:\n%s", out)
+	}
+}
+
+func TestExportNixNoCommentForNonNixPath(t *testing.T) {
+	rules := []db.RuleRow{
+		{
+			Name: "allow-curl", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "process.path",
+			OpData: "/usr/bin/curl", Precedence: "false", Nolog: "false",
+		},
+	}
+
+	out := ExportRulesToNix(rules)
+
+	if strings.Contains(out, "  #") {
+		t.Fatalf("should not add comment for non-nix path:\n%s", out)
+	}
+}
+
+func TestExportNixNoCommentForNonProcessOperand(t *testing.T) {
+	rules := []db.RuleRow{
+		{
+			Name: "allow-host", Enabled: "true", Action: "allow", Duration: "always",
+			OpType: "simple", OpSensitive: "false", OpOperand: "dest.host",
+			OpData: "example.com", Precedence: "false", Nolog: "false",
+		},
+	}
+
+	out := ExportRulesToNix(rules)
+
+	if strings.Contains(out, "  #") {
+		t.Fatalf("should not add comment for non-process operand:\n%s", out)
+	}
+}
+
 func TestExportRulesToNixIsValidNixSyntax(t *testing.T) {
 	rules := []db.RuleRow{
 		{

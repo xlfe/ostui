@@ -77,8 +77,8 @@ func TestGenerateRuleNameUnique(t *testing.T) {
 }
 
 func TestMatchTargetsCount(t *testing.T) {
-	if len(matchTargets) != 7 {
-		t.Fatalf("expected 7 match targets, got %d", len(matchTargets))
+	if len(matchTargets) != 12 {
+		t.Fatalf("expected 12 match targets, got %d", len(matchTargets))
 	}
 }
 
@@ -93,11 +93,16 @@ func TestMatchTargetsAllEntries(t *testing.T) {
 	}{
 		{"from this executable", "simple", "process.path", "/usr/bin/curl"},
 		{"from this command line", "simple", "process.command", "/usr/bin/curl https://example.com"},
+		{"from this CWD", "simple", "process.cwd", "/home/user"},
 		{"to this port", "simple", "dest.port", "443"},
 		{"to this IP", "simple", "dest.ip", "93.184.216.34"},
 		{"to this host", "simple", "dest.host", "example.com"},
+		{"from this source IP", "simple", "source.ip", "127.0.0.1"},
+		{"from this source port", "simple", "source.port", "12345"},
+		{"via this protocol", "simple", "protocol", "tcp"},
 		{"from this user", "simple", "user.id", "1000"},
 		{"from this PID", "simple", "process.id", "9876"},
+		{"matching SHA1", "simple", "process.hash.sha1", ""},
 	}
 
 	for i, exp := range expected {
@@ -120,9 +125,23 @@ func TestMatchTargetsAllEntries(t *testing.T) {
 	}
 }
 
+func findMatchTarget(operand string) *struct {
+	label   string
+	opType  string
+	operand string
+	dataFn  func(*pb.Connection) string
+} {
+	for i := range matchTargets {
+		if matchTargets[i].operand == operand {
+			return &matchTargets[i]
+		}
+	}
+	return nil
+}
+
 func TestMatchTargetProcessPath(t *testing.T) {
 	conn := &pb.Connection{ProcessPath: "/opt/app/bin/server"}
-	mt := matchTargets[0]
+	mt := findMatchTarget("process.path")
 	if mt.dataFn(conn) != "/opt/app/bin/server" {
 		t.Fatalf("expected /opt/app/bin/server, got %s", mt.dataFn(conn))
 	}
@@ -130,7 +149,7 @@ func TestMatchTargetProcessPath(t *testing.T) {
 
 func TestMatchTargetProcessCommand(t *testing.T) {
 	conn := &pb.Connection{ProcessArgs: []string{"/bin/cmd", "--flag", "value"}}
-	mt := matchTargets[1]
+	mt := findMatchTarget("process.command")
 	got := mt.dataFn(conn)
 	if got != "/bin/cmd --flag value" {
 		t.Fatalf("expected '/bin/cmd --flag value', got %q", got)
@@ -139,7 +158,7 @@ func TestMatchTargetProcessCommand(t *testing.T) {
 
 func TestMatchTargetProcessCommandEmpty(t *testing.T) {
 	conn := &pb.Connection{}
-	mt := matchTargets[1]
+	mt := findMatchTarget("process.command")
 	got := mt.dataFn(conn)
 	if got != "" {
 		t.Fatalf("expected empty string for nil args, got %q", got)
@@ -148,7 +167,7 @@ func TestMatchTargetProcessCommandEmpty(t *testing.T) {
 
 func TestMatchTargetDestPort(t *testing.T) {
 	conn := &pb.Connection{DstPort: 8080}
-	mt := matchTargets[2]
+	mt := findMatchTarget("dest.port")
 	got := mt.dataFn(conn)
 	if got != "8080" {
 		t.Fatalf("expected '8080', got %q", got)
@@ -157,7 +176,7 @@ func TestMatchTargetDestPort(t *testing.T) {
 
 func TestMatchTargetDestIP(t *testing.T) {
 	conn := &pb.Connection{DstIp: "10.0.0.1"}
-	mt := matchTargets[3]
+	mt := findMatchTarget("dest.ip")
 	if mt.dataFn(conn) != "10.0.0.1" {
 		t.Fatalf("expected 10.0.0.1, got %s", mt.dataFn(conn))
 	}
@@ -165,7 +184,7 @@ func TestMatchTargetDestIP(t *testing.T) {
 
 func TestMatchTargetDestHost(t *testing.T) {
 	conn := &pb.Connection{DstHost: "api.example.com"}
-	mt := matchTargets[4]
+	mt := findMatchTarget("dest.host")
 	if mt.dataFn(conn) != "api.example.com" {
 		t.Fatalf("expected api.example.com, got %s", mt.dataFn(conn))
 	}
@@ -173,7 +192,7 @@ func TestMatchTargetDestHost(t *testing.T) {
 
 func TestMatchTargetUserID(t *testing.T) {
 	conn := &pb.Connection{UserId: 0}
-	mt := matchTargets[5]
+	mt := findMatchTarget("user.id")
 	if mt.dataFn(conn) != "0" {
 		t.Fatalf("expected '0', got %s", mt.dataFn(conn))
 	}
@@ -185,7 +204,7 @@ func TestMatchTargetUserID(t *testing.T) {
 
 func TestMatchTargetProcessID(t *testing.T) {
 	conn := &pb.Connection{ProcessId: 42}
-	mt := matchTargets[6]
+	mt := findMatchTarget("process.id")
 	if mt.dataFn(conn) != "42" {
 		t.Fatalf("expected '42', got %s", mt.dataFn(conn))
 	}
@@ -254,19 +273,19 @@ func TestMatchTargetDataFnFormats(t *testing.T) {
 	}
 
 	// dest.port should format as string.
-	portData := matchTargets[2].dataFn(conn)
+	portData := findMatchTarget("dest.port").dataFn(conn)
 	if portData != fmt.Sprintf("%d", 443) {
 		t.Errorf("dest.port format: got %q, want '443'", portData)
 	}
 
 	// user.id should format as string.
-	userIDData := matchTargets[5].dataFn(conn)
+	userIDData := findMatchTarget("user.id").dataFn(conn)
 	if userIDData != fmt.Sprintf("%d", 1000) {
 		t.Errorf("user.id format: got %q, want '1000'", userIDData)
 	}
 
 	// process.id should format as string.
-	pidData := matchTargets[6].dataFn(conn)
+	pidData := findMatchTarget("process.id").dataFn(conn)
 	if pidData != fmt.Sprintf("%d", 9876) {
 		t.Errorf("process.id format: got %q, want '9876'", pidData)
 	}

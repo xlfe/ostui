@@ -85,6 +85,7 @@ type rulesModel struct {
 	width, height int
 	rules         []db.RuleRow
 	cursor        int
+	scrollOffset  int
 	database      *db.DB
 	eventBus      *bus.EventBus
 
@@ -684,11 +685,21 @@ func (m *rulesModel) View() string {
 		"#", "NAME", "ACTION", "DURATION", "EN",
 	))
 
+	// Keep cursor in the visible window.
+	if m.cursor >= m.scrollOffset+tableRows {
+		m.scrollOffset = m.cursor - tableRows + 1
+	}
+	if m.cursor < m.scrollOffset {
+		m.scrollOffset = m.cursor
+	}
+
 	var rows []string
-	for i, r := range m.rules {
-		if i >= tableRows {
-			break
-		}
+	end := m.scrollOffset + tableRows
+	if end > len(m.rules) {
+		end = len(m.rules)
+	}
+	for i := m.scrollOffset; i < end; i++ {
+		r := m.rules[i]
 		name := r.Name
 		if len(name) > 28 {
 			name = name[:27] + "…"

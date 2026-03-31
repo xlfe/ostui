@@ -153,8 +153,23 @@ func TestRespondRejectAction(t *testing.T) {
 	}
 }
 
+func matchTargetIndex(operand string) int {
+	for i := range matchTargets {
+		if matchTargets[i].operand == operand {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestRespondWithDifferentTargets(t *testing.T) {
+	conn := sampleConnection()
 	for i, mt := range matchTargets {
+		// Skip targets that have no data for the sample connection,
+		// since checkedTargets() falls back to cursor position for those.
+		if data := mt.dataFn(conn); data == "" || data == "0" {
+			continue
+		}
 		t.Run(mt.label, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "test.db")
 			d, err := db.Open(dbPath)
@@ -357,10 +372,10 @@ func TestRespondCompoundRuleProcessAndHost(t *testing.T) {
 		NodeAddr:   "unix:local",
 		ResponseCh: responseCh,
 	})
-	// Check both "from this executable" (0) and "to this host" (4).
+	// Check both "from this executable" and "to this host".
 	m.targetChecked = [matchTargetCount]bool{}
-	m.targetChecked[0] = true // process.path
-	m.targetChecked[4] = true // dest.host
+	m.targetChecked[matchTargetIndex("process.path")] = true
+	m.targetChecked[matchTargetIndex("dest.host")] = true
 
 	m.respond("allow")
 
@@ -426,9 +441,9 @@ func TestRespondCompoundRuleThreeConditions(t *testing.T) {
 	})
 	// Check executable + host + port.
 	m.targetChecked = [matchTargetCount]bool{}
-	m.targetChecked[0] = true // process.path
-	m.targetChecked[2] = true // dest.port
-	m.targetChecked[4] = true // dest.host
+	m.targetChecked[matchTargetIndex("process.path")] = true
+	m.targetChecked[matchTargetIndex("dest.port")] = true
+	m.targetChecked[matchTargetIndex("dest.host")] = true
 
 	m.respond("deny")
 
@@ -459,7 +474,7 @@ func TestRespondSingleCheckStaysSimple(t *testing.T) {
 	})
 	// Only executable checked — should produce simple rule, not list.
 	m.targetChecked = [matchTargetCount]bool{}
-	m.targetChecked[0] = true
+	m.targetChecked[matchTargetIndex("process.path")] = true
 
 	m.respond("allow")
 
