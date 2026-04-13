@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -642,7 +643,13 @@ func (m *rulesModel) doDelete() {
 	m.loadRules()
 }
 
-const nixExportFile = "opensnitch-rules.nix"
+func nixExportPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, ".config", "ostui", "opensnitch-rules.nix")
+}
 
 func (m *rulesModel) exportNix() {
 	m.loadRules()
@@ -652,15 +659,23 @@ func (m *rulesModel) exportNix() {
 		return
 	}
 
+	path := nixExportPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		log.Printf("ERROR exportNix mkdir: %v", err)
+		m.statusMsg = fmt.Sprintf("Export failed: %v", err)
+		m.statusTime = time.Now()
+		return
+	}
+
 	nix := ExportRulesToNix(m.rules)
-	if err := os.WriteFile(nixExportFile, []byte(nix), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(nix), 0644); err != nil {
 		log.Printf("ERROR exportNix: %v", err)
 		m.statusMsg = fmt.Sprintf("Export failed: %v", err)
 		m.statusTime = time.Now()
 		return
 	}
 
-	m.statusMsg = fmt.Sprintf("Exported %d rules to %s", len(m.rules), nixExportFile)
+	m.statusMsg = fmt.Sprintf("Exported %d rules to %s", len(m.rules), path)
 	m.statusTime = time.Now()
 }
 

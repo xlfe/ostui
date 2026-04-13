@@ -62,11 +62,18 @@ func TestRespondPersistsRuleToDB(t *testing.T) {
 	if rules[0].Enabled != "true" {
 		t.Fatalf("expected DB rule enabled 'true', got %q", rules[0].Enabled)
 	}
-	if rules[0].OpOperand != "process.path" {
-		t.Fatalf("expected DB rule operand 'process.path', got %q", rules[0].OpOperand)
+	// Default selection is now process.path + dest.host (compound rule).
+	if rules[0].OpType != "list" {
+		t.Fatalf("expected DB rule optype 'list', got %q", rules[0].OpType)
 	}
-	if rules[0].OpData != "/usr/bin/curl" {
-		t.Fatalf("expected DB rule opdata '/usr/bin/curl', got %q", rules[0].OpData)
+	if rules[0].OpOperand != "list" {
+		t.Fatalf("expected DB rule operand 'list', got %q", rules[0].OpOperand)
+	}
+	if !strings.Contains(rules[0].OpData, "/usr/bin/curl") {
+		t.Fatalf("expected DB rule opdata to contain '/usr/bin/curl', got %q", rules[0].OpData)
+	}
+	if !strings.Contains(rules[0].OpData, "example.com") {
+		t.Fatalf("expected DB rule opdata to contain 'example.com', got %q", rules[0].OpData)
 	}
 
 	// Verify cmd produces ruleCreatedMsg.

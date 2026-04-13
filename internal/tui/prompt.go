@@ -22,6 +22,12 @@ var ruleNameCounter atomic.Uint64
 
 const matchTargetCount = 12
 
+// Named indices into matchTargets for default selections.
+const (
+	targetProcessPath = 0
+	targetDestHost    = 5
+)
+
 // Match target options for rule creation.
 var matchTargets = [matchTargetCount]struct {
 	label   string
@@ -93,14 +99,23 @@ func (m *promptModel) Show(req *bus.PromptRequest) {
 	m.targetChecked = [matchTargetCount]bool{}
 	m.showDetails = false
 
-	// Start cursor on the first visible target and check it by default.
-	m.targetCursor = 0
-	for i, t := range matchTargets {
-		data := t.dataFn(req.Connection)
-		if data != "" && data != "0" {
-			m.targetCursor = i
-			m.targetChecked[i] = true
-			break
+	// Default-check executable and host when they have data.
+	conn := req.Connection
+	if d := matchTargets[targetProcessPath].dataFn(conn); d != "" && d != "0" {
+		m.targetCursor = targetProcessPath
+		m.targetChecked[targetProcessPath] = true
+	}
+	if d := matchTargets[targetDestHost].dataFn(conn); d != "" && d != "0" {
+		m.targetChecked[targetDestHost] = true
+	}
+	// If neither had data, fall back to the first visible target.
+	if !m.targetChecked[targetProcessPath] && !m.targetChecked[targetDestHost] {
+		for i, t := range matchTargets {
+			if d := t.dataFn(conn); d != "" && d != "0" {
+				m.targetCursor = i
+				m.targetChecked[i] = true
+				break
+			}
 		}
 	}
 
